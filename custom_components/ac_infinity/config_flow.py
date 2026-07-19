@@ -4,9 +4,11 @@ import logging
 from typing import Any
 
 from ac_infinity_ble.const import MANUFACTURER_ID
+from bleak import BleakClient
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
     async_discovered_service_info,
@@ -40,10 +42,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
         self._discovery_info = discovery_info
-        device: DeviceInfoEx = parse_manufacturer_data(
-            discovery_info.advertisement.manufacturer_data[MANUFACTURER_ID]
-        )
-        self.context["title_placeholders"] = {"name": device.name}
+        try:
+            device = parse_manufacturer_data(
+                discovery_info.advertisement.manufacturer_data[MANUFACTURER_ID]
+            )
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.debug(
+                "Could not parse advertisement from %s; allowing manual setup",
+                discovery_info.address,
+                exc_info=True,
+            )
+        else:
+            self.context["title_placeholders"] = {"name": device.name}
         return await self.async_step_user()
 
     async def async_step_user(
@@ -59,10 +69,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 discovery_info.address, raise_on_progress=False
             )
             self._abort_if_unique_id_configured()
-            controller = ACInfinityDevice(
-                discovery_info.device, advertisement_data=discovery_info.advertisement
-            )
             try:
+                controller = ACInfinityDevice(
+                    discovery_info.device,
+                    advertisement_data=discovery_info.advertisement,
+                )
                 await controller.update()
             except BLEAK_EXCEPTIONS:
                 errors["base"] = "cannot_connect"
@@ -98,7 +109,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._discovered_devices[discovery.address] = discovery
 
         if not self._discovered_devices:
-            return self.async_abort(reason="no_devices_found")
+            return await self.async_step_manual()
 
         _LOGGER.debug("Discovered devices: %s", self._discovered_devices)
 
@@ -106,16 +117,24 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         for service_info in self._discovered_devices.values():
             if MANUFACTURER_ID not in service_info.advertisement.manufacturer_data:
                 continue
-            device = parse_manufacturer_data(
-                service_info.advertisement.manufacturer_data[MANUFACTURER_ID]
-            )
+            try:
+                device = parse_manufacturer_data(
+                    service_info.advertisement.manufacturer_data[MANUFACTURER_ID]
+                )
+            except Exception:  # pylint: disable=broad-except
+                _LOGGER.debug(
+                    "Could not parse advertisement from %s",
+                    service_info.address,
+                    exc_info=True,
+                )
+                continue
             devices[service_info.address] = f"{device.name} ({service_info.address})"
 
         # A generic Bluetooth discovery may find nearby, unrelated devices.  Do
         # not send an empty ``vol.In`` mapping to the frontend: it renders as
         # an "address" label with no selectable input.
         if not devices:
-            return self.async_abort(reason="no_devices_found")
+            return await self.async_step_manual()
 
         data_schema = vol.Schema(
             {
@@ -125,5 +144,69 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=data_schema,
+            errors=errors,
+        )
+
+    async def async_step_manual(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle setup with a Bluetooth address supplied by the user."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            address = user_input[CONF_ADDRESS].strip().upper()
+            discovery_info = next(
+                (
+                    discovery
+                    for discovery in async_discovered_service_info(self.hass)
+                    if discovery.address.upper() == address
+                ),
+                None,
+            )
+
+            if discovery_info is None:
+                errors["base"] = "address_not_found"
+            elif not (
+                ble_device := bluetooth.async_ble_device_from_address(
+                    self.hass, discovery_info.address, connectable=True
+                )
+            ):
+                errors["base"] = "address_not_found"
+            else:
+                # A manual address is intentional: do not reject it merely
+                # because its cached advertisement is incomplete or malformed.
+                # First prove that Home Assistant can actually connect, then
+                # reuse the integration's protocol-level connection test.
+                client = BleakClient(ble_device)
+                try:
+                    await client.connect()
+                except BLEAK_EXCEPTIONS:
+                    errors["base"] = "cannot_connect"
+                finally:
+                    if client.is_connected:
+                        try:
+                            await client.disconnect()
+                        except BLEAK_EXCEPTIONS:
+                            _LOGGER.debug(
+                                "Error disconnecting from %s after setup test",
+                                discovery_info.address,
+                                exc_info=True,
+                            )
+
+                if errors:
+                    return self.async_show_form(
+                        step_id="manual",
+                        data_schema=vol.Schema({vol.Required(CONF_ADDRESS): str}),
+                        errors=errors,
+                    )
+
+                self._discovered_devices[discovery_info.address] = discovery_info
+                return await self.async_step_user(
+                    {CONF_ADDRESS: discovery_info.address}
+                )
+
+        return self.async_show_form(
+            step_id="manual",
+            data_schema=vol.Schema({vol.Required(CONF_ADDRESS): str}),
             errors=errors,
         )

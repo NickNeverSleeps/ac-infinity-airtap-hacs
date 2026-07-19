@@ -3,7 +3,16 @@
     "step": {
       "confirm": {
         "description": "[%key:common::config_flow::description::confirm_setup%]"
+      },
+      "manual": {
+        "description": "Enter the Bluetooth address of the AC Infinity Airtap.",
+        "data": {
+          "address": "Bluetooth address"
+        }
       }
+    },
+    "error": {
+      "address_not_found": "This address is not currently available from Home Assistant's Bluetooth scanner."
     },
     "abort": {
       "single_instance_allowed": "[%key:common::config_flow::abort::single_instance_allowed%]",
