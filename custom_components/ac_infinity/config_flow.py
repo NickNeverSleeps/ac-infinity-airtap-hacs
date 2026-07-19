@@ -102,6 +102,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         devices = {}
         for service_info in self._discovered_devices.values():
+            if MANUFACTURER_ID not in service_info.advertisement.manufacturer_data:
+                continue
             device = parse_manufacturer_data(
                 service_info.advertisement.manufacturer_data[MANUFACTURER_ID]
             )
