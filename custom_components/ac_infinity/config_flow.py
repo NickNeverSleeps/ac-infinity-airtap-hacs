@@ -91,6 +91,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if (
                     discovery.address in current_addresses
                     or discovery.address in self._discovered_devices
+                    or MANUFACTURER_ID
+                    not in discovery.advertisement.manufacturer_data
                 ):
                     continue
                 self._discovered_devices[discovery.address] = discovery
@@ -108,6 +110,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 service_info.advertisement.manufacturer_data[MANUFACTURER_ID]
             )
             devices[service_info.address] = f"{device.name} ({service_info.address})"
+
+        # A generic Bluetooth discovery may find nearby, unrelated devices.  Do
+        # not send an empty ``vol.In`` mapping to the frontend: it renders as
+        # an "address" label with no selectable input.
+        if not devices:
+            return self.async_abort(reason="no_devices_found")
 
         data_schema = vol.Schema(
             {
