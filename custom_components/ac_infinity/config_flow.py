@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from typing import Any
 
 from ac_infinity_ble.const import MANUFACTURER_ID
@@ -16,7 +17,14 @@ from homeassistant.components.bluetooth import (
 from homeassistant.const import CONF_ADDRESS, CONF_SERVICE_DATA
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import BLEAK_EXCEPTIONS, DOMAIN
+from .const import (
+    BLEAK_EXCEPTIONS,
+    DOMAIN,
+    TEST_DEVICE_ADDRESS,
+    TEST_DEVICE_NAME,
+    TEST_DEVICE_TYPE,
+    TEST_DEVICE_VERSION,
+)
 from .device import ACInfinityDevice, DeviceInfoEx
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,6 +33,25 @@ _LOGGER = logging.getLogger(__name__)
 def parse_manufacturer_data(data: bytes) -> DeviceInfoEx:
     from ac_infinity_ble.protocol import parse_manufacturer_data as parse
     return DeviceInfoEx.create(parse(data))
+
+
+def is_test_device(address: str) -> bool:
+    """Return whether this is the explicitly supported no-advertisement test fan."""
+    return address.upper() == TEST_DEVICE_ADDRESS
+
+
+def device_info_from_discovery(discovery: BluetoothServiceInfoBleak) -> DeviceInfoEx:
+    """Get state from an advertisement, with a narrow fallback for the test fan."""
+    manufacturer_data = discovery.advertisement.manufacturer_data
+    if MANUFACTURER_ID in manufacturer_data:
+        return parse_manufacturer_data(manufacturer_data[MANUFACTURER_ID])
+    if is_test_device(discovery.address):
+        return DeviceInfoEx(
+            type=TEST_DEVICE_TYPE,
+            name=TEST_DEVICE_NAME,
+            version=TEST_DEVICE_VERSION,
+        )
+    raise KeyError(f"Manufacturer data {MANUFACTURER_ID} is missing")
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -69,30 +96,33 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 discovery_info.address, raise_on_progress=False
             )
             self._abort_if_unique_id_configured()
-            try:
-                controller = ACInfinityDevice(
-                    discovery_info.device,
-                    advertisement_data=discovery_info.advertisement,
-                )
-                await controller.update()
-            except BLEAK_EXCEPTIONS:
+            ble_device = bluetooth.async_ble_device_from_address(
+                self.hass, discovery_info.address, connectable=True
+            )
+            if ble_device is None:
                 errors["base"] = "cannot_connect"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected error")
-                errors["base"] = "unknown"
             else:
-                await controller.stop()
-                return self.async_create_entry(
-                    title=controller.name,
-                    data={
-                        CONF_ADDRESS: discovery_info.address,
-                        CONF_SERVICE_DATA: parse_manufacturer_data(
-                            discovery_info.advertisement.manufacturer_data[
-                                MANUFACTURER_ID
-                            ]
-                        ),
-                    },
-                )
+                try:
+                    device_info = device_info_from_discovery(discovery_info)
+                    # Do not use discovery_info.device here.  It can be tied
+                    # to a passive/non-connectable proxy even when another HA
+                    # adapter can connect to the same address.
+                    controller = ACInfinityDevice(ble_device, state=device_info)
+                    await controller.update()
+                except BLEAK_EXCEPTIONS:
+                    errors["base"] = "cannot_connect"
+                except Exception:  # pylint: disable=broad-except
+                    _LOGGER.exception("Unexpected error")
+                    errors["base"] = "unknown"
+                else:
+                    await controller.stop()
+                    return self.async_create_entry(
+                        title=controller.name,
+                        data={
+                            CONF_ADDRESS: discovery_info.address,
+                            CONF_SERVICE_DATA: asdict(device_info),
+                        },
+                    )
 
         if discovery := self._discovery_info:
             self._discovered_devices[discovery.address] = discovery
@@ -102,8 +132,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if (
                     discovery.address in current_addresses
                     or discovery.address in self._discovered_devices
-                    or MANUFACTURER_ID
-                    not in discovery.advertisement.manufacturer_data
+                    or (
+                        MANUFACTURER_ID
+                        not in discovery.advertisement.manufacturer_data
+                        and not is_test_device(discovery.address)
+                    )
                 ):
                     continue
                 self._discovered_devices[discovery.address] = discovery
@@ -115,12 +148,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         devices = {}
         for service_info in self._discovered_devices.values():
-            if MANUFACTURER_ID not in service_info.advertisement.manufacturer_data:
-                continue
             try:
-                device = parse_manufacturer_data(
-                    service_info.advertisement.manufacturer_data[MANUFACTURER_ID]
-                )
+                device = device_info_from_discovery(service_info)
             except Exception:  # pylint: disable=broad-except
                 _LOGGER.debug(
                     "Could not parse advertisement from %s",

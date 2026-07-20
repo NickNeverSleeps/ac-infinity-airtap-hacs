@@ -74,6 +74,10 @@ class ACInfinityDevice(ACInfinityController):
         )
         self._fire_callbacks(CallbackType.ADVERTISEMENT)
 
+    def set_ble_device(self, ble_device: BLEDevice) -> None:
+        """Update the connection route without requiring advertisement data."""
+        self._ble_device = ble_device
+
     @property
     def speed(self) -> Optional[int]:
         """Get the speed of the device."""

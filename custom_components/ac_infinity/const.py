@@ -15,3 +15,12 @@ DEVICE_MODEL = {1: "Controller 67",
                 11: "Controller 69 Pro"}
 
 FAMILY_E_MODELS = {7, 9, 11, 12}
+
+# Temporary compatibility profile for the Airtap that advertises only its local
+# name (``BLE_FAN``) and does not include the normal AC Infinity manufacturer
+# payload.  Keep this deliberately limited to the reported device address: a
+# local name alone is not a safe way to identify arbitrary BLE devices.
+TEST_DEVICE_ADDRESS = "A4:C1:38:DC:7F:1F"
+TEST_DEVICE_NAME = "BLE_FAN"
+TEST_DEVICE_TYPE = 6
+TEST_DEVICE_VERSION = 1

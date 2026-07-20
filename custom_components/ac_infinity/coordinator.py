@@ -51,12 +51,19 @@ class ACInfinityDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[None]
         return (
             self.hass.state == CoreState.running
             and self.controller.update_needed(seconds_since_last_poll)
-            and bool(
-                bluetooth.async_ble_device_from_address(
-                    self.hass, service_info.device.address, connectable=True
-                )
-            )
+            and self._set_connectable_ble_device(service_info.device.address)
         )
+
+    def _set_connectable_ble_device(self, address: str) -> bool:
+        """Use HA's connectable route when several sources see one device."""
+        ble_device = bluetooth.async_ble_device_from_address(
+            self.hass, address, connectable=True
+        )
+        if ble_device is None:
+            return False
+        self.ble_device = ble_device
+        self.controller.set_ble_device(ble_device)
+        return True
 
     async def _async_update(
         self, service_info: bluetooth.BluetoothServiceInfoBleak
@@ -79,14 +86,13 @@ class ACInfinityDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[None]
                           self.ble_device.name,
                           self.ble_device.address,
                           service_info.advertisement)
-        if MANUFACTURER_ID not in service_info.advertisement.manufacturer_data:
-            return
-        self.ble_device = service_info.device
-        self.controller.set_ble_device_and_advertisement_data(
-            service_info.device, service_info.advertisement
-        )
-        if self.controller.name:
-            self._device_ready.set()
+        if MANUFACTURER_ID in service_info.advertisement.manufacturer_data:
+            self.ble_device = service_info.device
+            self.controller.set_ble_device_and_advertisement_data(
+                service_info.device, service_info.advertisement
+            )
+            if self.controller.name:
+                self._device_ready.set()
         self.logger.debug("%s (%s) state after advertisement: %s",
                           self.ble_device.name,
                           self.ble_device.address,
