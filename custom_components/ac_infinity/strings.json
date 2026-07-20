@@ -12,7 +12,8 @@
       }
     },
     "error": {
-      "address_not_found": "This address is not currently available from Home Assistant's Bluetooth scanner."
+      "address_not_found": "This address is not currently available from Home Assistant's Bluetooth scanner.",
+      "cannot_connect": "Home Assistant cannot connect to this Bluetooth device."
     },
     "abort": {
       "single_instance_allowed": "[%key:common::config_flow::abort::single_instance_allowed%]",

@@ -70,9 +70,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._abort_if_unique_id_configured()
         self._discovery_info = discovery_info
         try:
-            device = parse_manufacturer_data(
-                discovery_info.advertisement.manufacturer_data[MANUFACTURER_ID]
-            )
+            device = device_info_from_discovery(discovery_info)
         except Exception:  # pylint: disable=broad-except
             _LOGGER.debug(
                 "Could not parse advertisement from %s; allowing manual setup",
