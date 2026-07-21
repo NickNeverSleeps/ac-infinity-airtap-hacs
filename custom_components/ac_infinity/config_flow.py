@@ -6,6 +6,7 @@ from typing import Any
 
 from ac_infinity_ble.const import MANUFACTURER_ID
 from bleak import BleakClient
+from bleak.backends.device import BLEDevice
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -21,6 +22,7 @@ from .const import (
     BLEAK_EXCEPTIONS,
     DOMAIN,
     TEST_DEVICE_ADDRESS,
+    TEST_DEVICE_BLUEZ_PATH,
     TEST_DEVICE_NAME,
     TEST_DEVICE_TYPE,
     TEST_DEVICE_VERSION,
@@ -38,6 +40,21 @@ def parse_manufacturer_data(data: bytes) -> DeviceInfoEx:
 def is_test_device(address: str) -> bool:
     """Return whether this is the explicitly supported no-advertisement test fan."""
     return address.upper() == TEST_DEVICE_ADDRESS
+
+
+def connectable_ble_device(hass, address: str) -> BLEDevice | None:
+    """Get HA's route, or directly try the local adapter for the test fan."""
+    if ble_device := bluetooth.async_ble_device_from_address(
+        hass, address, connectable=True
+    ):
+        return ble_device
+    if is_test_device(address):
+        # HA has a passive sighting but no connectable route for this address.
+        # Supplying only the address makes Bleak try the HA host's local radio.
+        return BLEDevice(
+            address, TEST_DEVICE_NAME, {"path": TEST_DEVICE_BLUEZ_PATH}, rssi=0
+        )
+    return None
 
 
 def device_info_from_discovery(discovery: BluetoothServiceInfoBleak) -> DeviceInfoEx:
@@ -94,9 +111,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 discovery_info.address, raise_on_progress=False
             )
             self._abort_if_unique_id_configured()
-            ble_device = bluetooth.async_ble_device_from_address(
-                self.hass, discovery_info.address, connectable=True
-            )
+            ble_device = connectable_ble_device(self.hass, discovery_info.address)
             if ble_device is None:
                 errors["base"] = "cannot_connect"
             else:
@@ -194,9 +209,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if discovery_info is None:
                 errors["base"] = "address_not_found"
             elif not (
-                ble_device := bluetooth.async_ble_device_from_address(
-                    self.hass, discovery_info.address, connectable=True
-                )
+                ble_device := connectable_ble_device(self.hass, discovery_info.address)
             ):
                 errors["base"] = "address_not_found"
             else:

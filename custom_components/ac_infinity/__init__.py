@@ -3,13 +3,19 @@ from __future__ import annotations
 import logging
 
 from ac_infinity_ble import DeviceInfo
+from bleak.backends.device import BLEDevice
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, CONF_SERVICE_DATA, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    TEST_DEVICE_ADDRESS,
+    TEST_DEVICE_BLUEZ_PATH,
+    TEST_DEVICE_NAME,
+)
 from .coordinator import ACInfinityDataUpdateCoordinator
 from .device import ACInfinityDevice, DeviceInfoEx
 from .models import ACInfinityData
@@ -22,6 +28,12 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     address: str = entry.data[CONF_ADDRESS]
     ble_device = bluetooth.async_ble_device_from_address(hass, address.upper(), True)
+    if ble_device is None and address.upper() == TEST_DEVICE_ADDRESS:
+        # Test fallback: the passive advertisement has no connectable source
+        # record, so explicitly try the HA host's local Bluetooth adapter.
+        ble_device = BLEDevice(
+            address, TEST_DEVICE_NAME, {"path": TEST_DEVICE_BLUEZ_PATH}, rssi=0
+        )
     if not ble_device:
         raise ConfigEntryNotReady(
             f"Could not find AC Infinity device with address {address}"

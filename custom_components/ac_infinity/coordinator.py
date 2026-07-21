@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import (
 from homeassistant.core import CoreState, HomeAssistant, callback
 
 from .device import ACInfinityDevice
+from .const import TEST_DEVICE_ADDRESS, TEST_DEVICE_BLUEZ_PATH, TEST_DEVICE_NAME
 
 DEVICE_STARTUP_TIMEOUT = 30
 
@@ -60,7 +61,11 @@ class ACInfinityDataUpdateCoordinator(ActiveBluetoothDataUpdateCoordinator[None]
             self.hass, address, connectable=True
         )
         if ble_device is None:
-            return False
+            if address.upper() != TEST_DEVICE_ADDRESS:
+                return False
+            ble_device = BLEDevice(
+                address, TEST_DEVICE_NAME, {"path": TEST_DEVICE_BLUEZ_PATH}, rssi=0
+            )
         self.ble_device = ble_device
         self.controller.set_ble_device(ble_device)
         return True
