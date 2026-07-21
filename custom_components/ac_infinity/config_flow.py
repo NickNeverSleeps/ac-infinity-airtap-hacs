@@ -21,11 +21,6 @@ from homeassistant.data_entry_flow import FlowResult
 from .const import (
     BLEAK_EXCEPTIONS,
     DOMAIN,
-    TEST_DEVICE_ADDRESS,
-    TEST_DEVICE_BLUEZ_PATH,
-    TEST_DEVICE_NAME,
-    TEST_DEVICE_TYPE,
-    TEST_DEVICE_VERSION,
 )
 from .device import ACInfinityDevice, DeviceInfoEx
 
@@ -37,24 +32,11 @@ def parse_manufacturer_data(data: bytes) -> DeviceInfoEx:
     return DeviceInfoEx.create(parse(data))
 
 
-def is_test_device(address: str) -> bool:
-    """Return whether this is the explicitly supported no-advertisement test fan."""
-    return address.upper() == TEST_DEVICE_ADDRESS
-
-
 def connectable_ble_device(hass, address: str) -> BLEDevice | None:
-    """Get HA's route, or directly try the local adapter for the test fan."""
-    if ble_device := bluetooth.async_ble_device_from_address(
+    """Get Home Assistant's connectable route for a Bluetooth address."""
+    return bluetooth.async_ble_device_from_address(
         hass, address, connectable=True
-    ):
-        return ble_device
-    if is_test_device(address):
-        # HA has a passive sighting but no connectable route for this address.
-        # Supplying only the address makes Bleak try the HA host's local radio.
-        return BLEDevice(
-            address, TEST_DEVICE_NAME, {"path": TEST_DEVICE_BLUEZ_PATH}, rssi=0
-        )
-    return None
+    )
 
 
 def device_info_from_discovery(discovery: BluetoothServiceInfoBleak) -> DeviceInfoEx:
@@ -62,12 +44,6 @@ def device_info_from_discovery(discovery: BluetoothServiceInfoBleak) -> DeviceIn
     manufacturer_data = discovery.advertisement.manufacturer_data
     if MANUFACTURER_ID in manufacturer_data:
         return parse_manufacturer_data(manufacturer_data[MANUFACTURER_ID])
-    if is_test_device(discovery.address):
-        return DeviceInfoEx(
-            type=TEST_DEVICE_TYPE,
-            name=TEST_DEVICE_NAME,
-            version=TEST_DEVICE_VERSION,
-        )
     raise KeyError(f"Manufacturer data {MANUFACTURER_ID} is missing")
 
 
@@ -145,11 +121,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if (
                     discovery.address in current_addresses
                     or discovery.address in self._discovered_devices
-                    or (
-                        MANUFACTURER_ID
-                        not in discovery.advertisement.manufacturer_data
-                        and not is_test_device(discovery.address)
-                    )
+                    or MANUFACTURER_ID
+                    not in discovery.advertisement.manufacturer_data
                 ):
                     continue
                 self._discovered_devices[discovery.address] = discovery
